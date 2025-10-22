@@ -1,0 +1,105 @@
+name: Build Crate
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - '*'
+  pull_request:
+    branches: [ main ]
+
+env:
+  IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+  OUTPUT_PATH: "./target/release/metaphor-apk-pack"
+  RELEASE_TAG: ${{ github.ref_name }}
+  RELEASE_PATH: "./Release"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        platform: [
+          { 
+            # Ubuntu
+            runner-name: "ubuntu-latest",
+            rust-target: "x86_64-unknown-linux-gnu",
+            release-name: "Linux Release",
+            output-name: "metaphor-apk-pack-linux-amd64.tar.gz"
+          },
+          { 
+            # Windows
+            runner-name: "windows-latest",
+            rust-target: "x86_64-pc-windows-msvc",
+            release-name: "Windows Release",
+            output-name: "metaphor-apk-pack-windows-amd64.zip"
+          }
+        ]
+    runs-on: ${{ matrix.platform.runner-name }}
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        submodules: 'recursive'
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1.0.6
+      with:
+        toolchain: stable 
+        components: rust-src
+        target: ${{ matrix.platform.rust-target }}
+
+    - name: Build Project
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --release
+
+    - name: Create Output (Linux)
+      if: matrix.platform.runner-name == 'ubuntu-latest'
+      run: |
+        tar -czf ${{ matrix.platform.output-name }} ${{ env.OUTPUT_PATH }}
+
+    - name: Create Output (Windows)
+      if: matrix.platform.runner-name == 'windows-latest'
+      run: |
+        Compress-Archive -Path ${{ env.OUTPUT_PATH }}.exe -DestinationPath ${{ matrix.platform.output-name }}
+
+    - name: Upload Output
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.platform.release-name }}
+        path: ${{ matrix.platform.output-name }}
+
+  publish:
+    needs: build
+    runs-on: "windows-latest"
+    steps:
+      - uses: actions/checkout@v2
+        if: env.IS_RELEASE == 'true'
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+
+      - name: Download Linux Release
+        uses: actions/download-artifact@v5
+        if: env.IS_RELEASE == 'true'
+        with:
+          name: "Linux Release"
+          path: ${{ env.RELEASE_PATH }}
+
+      - name: Download Windows Release
+        uses: actions/download-artifact@v5
+        if: env.IS_RELEASE == 'true'
+        with:
+          name: "Windows Release"
+          path: ${{ env.RELEASE_PATH }}
+
+      - name: Upload to GitHub Releases (on Tag)
+        uses: softprops/action-gh-release@v0.1.14
+        if: env.IS_RELEASE == 'true'
+        with:
+          # Path to load note-worthy description of changes in release from
+          body_path: "CHANGELOG.md"
+          # Newline-delimited list of path globs for asset files to upload
+          files: ${{ env.RELEASE_PATH }}/*
