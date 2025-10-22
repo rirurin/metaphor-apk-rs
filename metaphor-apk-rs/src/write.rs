@@ -108,7 +108,8 @@ impl<'a, S: Write + Seek> ApkWriter<'a, S> {
                     let mut compressed = vec![];
                     let cmp_real_size = {
                         let mut encoder = flate2::write::ZlibEncoder::new(&mut compressed, flate2::Compression::fast());
-                        encoder.write(&file)?
+                        encoder.write_all(&file)?;
+                        encoder.finish()?.len()
                     };
                     let cmp_pad_size = (cmp_real_size + 0xf) & !0xf; // align to nearest 0x10
                     (cmp_real_size, cmp_pad_size, compressed)

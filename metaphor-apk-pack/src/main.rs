@@ -61,8 +61,8 @@ fn app() -> Result<(), Box<dyn Error>> {
     let meta = std::fs::metadata(path)?;
     let out_idx = if meta.is_file() { 1 } else { 2 };
     let output = match args.len() > out_idx {
-        true => Path::new(&args[out_idx]),
-        false => Path::new(path.parent().unwrap())
+        true => PathBuf::from(&args[out_idx]),
+        false => PathBuf::from(path.parent().unwrap().join(path.file_stem().unwrap()))
     };
     if meta.is_file() {
         // APK mode

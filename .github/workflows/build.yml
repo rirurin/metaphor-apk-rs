@@ -58,7 +58,7 @@ jobs:
     - name: Create Output (Linux)
       if: matrix.platform.runner-name == 'ubuntu-latest'
       run: |
-        tar -czf ${{ matrix.platform.output-name }} ${{ env.OUTPUT_PATH }}
+        tar -czf -C ./target/release ${{ matrix.platform.output-name }} ${{ env.OUTPUT_PATH }}
 
     - name: Create Output (Windows)
       if: matrix.platform.runner-name == 'windows-latest'
