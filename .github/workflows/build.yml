@@ -58,7 +58,7 @@ jobs:
     - name: Create Output (Linux)
       if: matrix.platform.runner-name == 'ubuntu-latest'
       run: |
-        tar -czf -C ./target/release ${{ matrix.platform.output-name }} ${{ env.OUTPUT_PATH }}
+        tar -czf ${{ matrix.platform.output-name }} -C target/release metaphor-apk-pack
 
     - name: Create Output (Windows)
       if: matrix.platform.runner-name == 'windows-latest'
