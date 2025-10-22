@@ -5,11 +5,12 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::mem::MaybeUninit;
 use std::path::Path;
-use crate::serial::{DataHeader, FileHeader, Header};
+use crate::serial::{CompressionType, DataHeader, FileHeader, Header};
 
 #[derive(Debug)]
 pub enum ReaderError {
-    FileNotFound(String)
+    FileNotFound(String),
+    ZStdError(usize)
 }
 
 impl Error for ReaderError {}
@@ -28,12 +29,12 @@ impl ApkReader<BufReader<File>> {
     pub fn read<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn Error>> {
         let mut owner = BufReader::new(File::open(path)?);
         let mut header: MaybeUninit<Header> = MaybeUninit::uninit();
-        owner.read(unsafe { &mut *(header.as_mut_ptr() as *mut [u8; size_of::<Header>()]) })?;
+        owner.read_exact(unsafe { &mut *(header.as_mut_ptr() as *mut [u8; size_of::<Header>()]) })?;
         let header = unsafe { header.assume_init() };
         let mut files = Vec::with_capacity(header.count as usize);
         let head_area = unsafe { std::slice::from_raw_parts_mut(
             files.as_mut_ptr() as *mut u8, header.count as usize * size_of::<FileHeader>()) };
-        owner.read(head_area)?;
+        owner.read_exact(head_area)?;
         unsafe { files.set_len(header.count as usize) };
         Ok(Self { owner, files })
     }
@@ -44,18 +45,18 @@ impl<S: Read + Seek> ApkReader<S> {
         // get data header
         owner.seek(SeekFrom::Start(f.offset as u64))?;
         let mut data_header: MaybeUninit<DataHeader> = MaybeUninit::uninit();
-        owner.read(unsafe { &mut *(data_header.as_mut_ptr() as *mut [u8; size_of::<DataHeader>()]) })?;
+        owner.read_exact(unsafe { &mut *(data_header.as_mut_ptr() as *mut [u8; size_of::<DataHeader>()]) })?;
         let data_header = unsafe { data_header.assume_init() };
-        // decompress using LZ4
+        // read compressed stream
         let mut compressed = Vec::with_capacity(data_header.compressed as usize);
         unsafe { compressed.set_len(data_header.compressed as usize) };
-        let mut bytes_read = 0;
-        while bytes_read < data_header.compressed as usize {
-            bytes_read += owner.read(&mut compressed.as_mut_slice()[bytes_read..])?;
-        }
+        owner.read_exact(&mut compressed)?;
+        // decompress using specified compression algorithm
         let mut out = Vec::with_capacity(data_header.decompressed as usize);
-        unsafe { out.set_len(data_header.decompressed as usize) };
-        lz4_flex::block::decompress_into(compressed.as_slice(), out.as_mut_slice())?;
+        unsafe {
+            out.set_len(data_header.decompressed as usize);
+            decompress_raw(&data_header, compressed.as_slice(), out.as_mut_slice())?;
+        }
         Ok(out)
     }
 
@@ -75,6 +76,39 @@ impl<S: Read + Seek> ApkReader<S> {
         }
         Ok(files)
     }
+
+    pub fn create_file_list(&self) -> String {
+        let mut file_list = String::new();
+        for f in &self.files {
+            file_list.push_str(f.get_filename());
+            file_list.push('\n');
+        }
+        file_list
+    }
+}
+
+pub unsafe fn decompress_raw(header: &DataHeader, compressed: &[u8], decompressed: &mut [u8])
+    -> Result<(), Box<dyn Error>> {
+    Ok(match header.compress_type {
+        CompressionType::ZLib => {
+            let mut decoder = flate2::read::ZlibDecoder::new(compressed);
+            decoder.read_exact(decompressed)?;
+        },
+        CompressionType::LZ4 => {
+            #[cfg(feature = "use-lz4-flex")]
+            {
+                lz4_flex::block::decompress_into(compressed, decompressed)?;
+            }
+            #[cfg(feature = "use-lz4")]
+            {
+                lz4::block::decompress_to_buffer(compressed, Some(decompressed.len() as i32), decompressed)?;
+            }
+        },
+        CompressionType::ZStandard => {
+            zstd::zstd_safe::decompress(decompressed, &compressed)
+                .map_err(|e| ReaderError::ZStdError(e))?;
+        },
+    })
 }
 
 #[cfg(test)]

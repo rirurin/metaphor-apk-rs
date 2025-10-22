@@ -44,6 +44,10 @@ pub struct FileHeader {
     unk2: u32
 }
 
+const _: () = {
+    ["Size of File Header"][size_of::<FileHeader>() - 0x120];
+};
+
 impl FileHeader {
     pub fn get_filename(&self) -> &str {
         unsafe { CStr::from_ptr(self.filename.as_ptr()).to_str().unwrap() }
@@ -81,13 +85,45 @@ const _: () = {
 #[derive(Debug)]
 pub struct DataHeader {
     magic: u32,
-    bitfield: u32,
-    f8: u32,
+    pub(crate) compress_type: CompressionType,
+    num_blocks: u16,
+    size_limit: u32,
     pub(crate) decompressed: u32,
     pub(crate) length: u32,
     unk: [u32; 3],
     pub(crate) compressed: u32,
     pub(crate) header_size: u32
+}
+
+impl DataHeader {
+    pub fn get_compress_type(&self) -> CompressionType {
+        self.compress_type
+    }
+    pub fn get_decompressed_size(&self) -> u32 {
+        self.decompressed
+    }
+    pub fn get_length(&self) -> u32 {
+        self.length
+    }
+    pub unsafe fn get_data(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(
+            (&raw const *self as *const u8).add(self.header_size as usize),
+            self.compressed as usize
+        ) }
+    }
+
+    pub unsafe fn decompress_from_raw_parts(&self, decompressed: &mut [u8]) {
+        let data = unsafe { self.get_data() };
+        unsafe { crate::read::decompress_raw(self, data, decompressed).unwrap() };
+    }
+}
+
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq)]
+pub enum CompressionType {
+    ZLib = 0,
+    LZ4 = 1,
+    ZStandard = 2
 }
 
 pub(crate) static APK_DATA_MAGIC: u32 = 0x305a5a5a;
@@ -97,11 +133,12 @@ impl DataHeader {
         self.magic == APK_DATA_MAGIC
     }
 
-    pub fn new(cmp_size: usize, dcmp_size: usize) -> Self {
+    pub fn new(cmp_size: usize, cmp_type: CompressionType, dcmp_size: usize) -> Self {
         Self {
             magic: APK_DATA_MAGIC,
-            bitfield: 0x010001,
-            f8: 0,
+            compress_type: cmp_type,
+            num_blocks: 1,
+            size_limit: 0,
             decompressed: dcmp_size as u32,
             length: (cmp_size + size_of::<Self>()) as u32,
             unk: [0; 3],

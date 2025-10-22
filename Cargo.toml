@@ -1,13 +1,14 @@
 [workspace]
 
 members = [
+    "metaphor-apk-pack",
     "metaphor-apk-rs",
 ]
 
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 authors = [ "Rirurin" ]
 categories = [ "encoding" ]
 homepage = "https://riri.wtf"
